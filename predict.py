@@ -5,7 +5,7 @@ from diffusers import StableDiffusionXLPipeline, DPMSolverMultistepScheduler
 import subprocess
 import time
 
-MODEL_URL = "https://civitai.com/api/download/models/1883050"  # Замените на вашу ссылку
+MODEL_URL = "https://civitai.com/api/download/models/1883050?type=Model&format=SafeTensor&size=pruned&fp=fp16"  # Замените на вашу ссылку
 MODEL_CACHE = "model_cache"
 MODEL_FILE = "model.safetensors"
 
