@@ -2,45 +2,22 @@ import torch
 import os
 from cog import BasePredictor, Input, Path
 from diffusers import StableDiffusionXLPipeline, DPMSolverMultistepScheduler
-import subprocess
 import time
-
-MODEL_URL = "https://civitai.com/api/download/models/1883050?type=Model&format=SafeTensor&size=pruned&fp=fp16"  # Замените на вашу ссылку
-MODEL_CACHE = "model_cache"
-MODEL_FILE = "model.safetensors"
 
 class Predictor(BasePredictor):
     def setup(self):
         """Загрузка модели при старте"""
-        print("Начинаем загрузку модели...")
-        
-        # Создаем папку для кеша
-        os.makedirs(MODEL_CACHE, exist_ok=True)
-        model_path = os.path.join(MODEL_CACHE, MODEL_FILE)
-        
-        # Скачиваем модель если её нет
-        if not os.path.exists(model_path):
-            print(f"Скачиваем модель с {MODEL_URL}")
-            # Используем wget для загрузки
-            subprocess.run([
-                "wget", 
-                "-O", model_path,
-                "--content-disposition",
-                MODEL_URL
-            ], check=True)
-            print("Модель скачана!")
-        
         print("Загружаем модель в память...")
         
-        # Загружаем как SDXL модель
+        # Загружаем локальную модель
         self.pipe = StableDiffusionXLPipeline.from_single_file(
-            model_path,
+            "model.safetensors",
             torch_dtype=torch.float16,
             use_safetensors=True,
             variant="fp16"
         )
         
-        # Оптимизация
+        # Оптимизация планировщика
         self.pipe.scheduler = DPMSolverMultistepScheduler.from_config(
             self.pipe.scheduler.config
         )
@@ -48,7 +25,7 @@ class Predictor(BasePredictor):
         # Переносим на GPU
         self.pipe = self.pipe.to("cuda")
         
-        # Включаем оптимизации
+        # Включаем оптимизации памяти
         self.pipe.enable_xformers_memory_efficient_attention()
         self.pipe.enable_vae_slicing()
         
@@ -58,11 +35,11 @@ class Predictor(BasePredictor):
         self,
         prompt: str = Input(
             description="Описание изображения",
-            default="beautiful landscape, high quality"
+            default="beautiful landscape, high quality, detailed"
         ),
         negative_prompt: str = Input(
             description="Что НЕ должно быть на изображении",
-            default="ugly, blurry, low quality, distorted"
+            default="ugly, blurry, low quality, distorted, disfigured"
         ),
         width: int = Input(
             description="Ширина изображения",
@@ -88,9 +65,17 @@ class Predictor(BasePredictor):
         ),
         seed: int = Input(
             description="Seed для воспроизводимости (-1 для случайного)",
-            default=-1
+            default=-1,
+            ge=-1,
+            le=2147483647
         ),
-    ) -> Path:
+        num_images: int = Input(
+            description="Количество изображений",
+            default=1,
+            ge=1,
+            le=4
+        ),
+    ) -> list[Path]:
         """Генерация изображения"""
         
         # Генерируем seed если не указан
@@ -99,22 +84,27 @@ class Predictor(BasePredictor):
         
         generator = torch.Generator("cuda").manual_seed(seed)
         
-        print(f"Генерируем с seed: {seed}")
+        print(f"Генерируем {num_images} изображений с seed: {seed}")
+        print(f"Промпт: {prompt}")
         
-        # Генерируем изображение
-        image = self.pipe(
+        # Генерируем изображения
+        images = self.pipe(
             prompt=prompt,
             negative_prompt=negative_prompt,
             width=width,
             height=height,
             num_inference_steps=num_inference_steps,
             guidance_scale=guidance_scale,
-            generator=generator
-        ).images[0]
+            generator=generator,
+            num_images_per_prompt=num_images
+        ).images
         
-        # Сохраняем результат
-        output_path = "/tmp/output.png"
-        image.save(output_path)
+        # Сохраняем результаты
+        output_paths = []
+        for i, image in enumerate(images):
+            output_path = f"/tmp/output_{i}.png"
+            image.save(output_path)
+            output_paths.append(Path(output_path))
+            print(f"Изображение {i+1} сохранено: {output_path}")
         
-        print(f"Изображение сохранено: {output_path}")
-        return Path(output_path)
+        return output_paths if len(output_paths) > 1 else output_paths[0]
